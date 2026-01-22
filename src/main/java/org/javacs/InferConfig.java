@@ -215,32 +215,16 @@ class InferConfig {
             var output = Files.createTempFile("jls-maven-output", ".txt");
             LOG.info("Running " + String.join(" ", command) + " ...");
             var workingDirectory = pomXml.toAbsolutePath().getParent().toFile();
-            var processBuilder = new ProcessBuilder()
-                    .command(command)
-                    .directory(workingDirectory)
-                    .redirectError(ProcessBuilder.Redirect.INHERIT)
-                    .redirectOutput(output.toFile());
-            // Inherit environment from parent process to allow Maven to read settings.xml and use credentials
-            var env = processBuilder.environment();
-            env.putAll(System.getenv());
-            // Merge any custom environment variables passed to this method
-            env.putAll(envVars);
-            var process = processBuilder.start();
-            // Wait for process to exit
+            var process =
+                    new ProcessBuilder()
+                            .command(command)
+                            .directory(workingDirectory)
+                            .redirectError(ProcessBuilder.Redirect.INHERIT)
+                            .redirectOutput(output.toFile())
+                            .start();
+
             var result = process.waitFor();
             if (result != 0) {
-                LOG.severe("`" + String.join(" ", command) + "` returned " + result);
-                LOG.severe("If accessing private repositories, ensure credentials are configured in ~/.m2/settings.xml");
-                LOG.severe("You may need to run `mvn dependency:sources` manually to download source JARs");
-                // Log the output for debugging
-                try {
-                    var lines = Files.readAllLines(output);
-                    for (var line : lines) {
-                        LOG.severe(line);
-                    }
-                } catch (IOException e) {
-                    LOG.severe("Could not read Maven output: " + e.getMessage());
-                }
                 return Set.of();
             }
             // Read output
