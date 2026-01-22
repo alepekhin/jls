@@ -333,12 +333,12 @@ class JavaLanguageServer extends LanguageServer {
         var column = position.position.character + 1;
         if (!FileStore.isJavaFile(uri)) return Optional.empty();
         var file = Paths.get(uri);
-        var list = new HoverProvider(compiler()).hover(file, line, column);
-        if (list == HoverProvider.NOT_SUPPORTED) {
+        var content = new HoverProvider(compiler()).hover(file, line, column);
+        if (content == null) {
             return Optional.empty();
         }
         // TODO add range
-        return Optional.of(new Hover(list));
+        return Optional.of(new Hover(content));
     }
 
     @Override

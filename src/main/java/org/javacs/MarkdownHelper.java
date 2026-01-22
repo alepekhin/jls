@@ -1,13 +1,12 @@
 package org.javacs;
 
-import com.sun.source.doctree.DocCommentTree;
-import com.sun.source.doctree.DocTree;
+import com.sun.source.doctree.*;
 import java.io.IOException;
 import java.io.StringReader;
 import java.io.StringWriter;
 import java.nio.CharBuffer;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.StringJoiner;
 import java.util.function.Function;
 import java.util.logging.Logger;
 import java.util.regex.Pattern;
@@ -35,15 +34,99 @@ public class MarkdownHelper {
     }
 
     public static String asMarkdown(DocCommentTree comment) {
-        var lines = comment.getFirstSentence();
-        return asMarkdown(lines);
+        var parts = new ArrayList<String>();
+        var firstSentence = renderTrees(comment.getFirstSentence());
+        if (!firstSentence.isBlank()) {
+            parts.add(firstSentence);
+        }
+        var body = renderTrees(comment.getBody());
+        if (!body.isBlank()) {
+            parts.add(body);
+        }
+        var blockTags = renderBlockTags(comment.getBlockTags());
+        if (!blockTags.isBlank()) {
+            parts.add(blockTags);
+        }
+        return String.join("\n\n", parts);
     }
 
-    private static String asMarkdown(List<? extends DocTree> lines) {
-        var join = new StringJoiner("\n");
-        for (var l : lines) join.add(l.toString());
-        var html = join.toString();
-        return asMarkdown(html);
+    private static String renderTrees(List<? extends DocTree> trees) {
+        var out = new StringBuilder();
+        for (var tree : trees) {
+            renderTree(tree, out);
+        }
+        return normalizeMarkdown(out.toString());
+    }
+
+    private static String renderBlockTags(List<? extends DocTree> tags) {
+        var lines = new ArrayList<String>();
+        for (var tag : tags) {
+            switch (tag.getKind()) {
+                case AUTHOR: {
+                    var t = (AuthorTree) tag;
+                    lines.add(formatBlock("@author", renderTrees(t.getName())));
+                    break;
+                }
+                case SINCE: {
+                    var t = (SinceTree) tag;
+                    lines.add(formatBlock("@since", renderTrees(t.getBody())));
+                    break;
+                }
+                case SEE: {
+                    var t = (SeeTree) tag;
+                    var label = renderTrees(t.getReference());
+                    lines.add(formatBlock("@see", label));
+                    break;
+                }
+                case PARAM: {
+                    var t = (ParamTree) tag;
+                    var name = t.getName().toString();
+                    var desc = renderTrees(t.getDescription());
+                    lines.add(formatParam(name, desc, t.isTypeParameter()));
+                    break;
+                }
+                case RETURN: {
+                    var t = (ReturnTree) tag;
+                    lines.add(formatBlock("@return", renderTrees(t.getDescription())));
+                    break;
+                }
+                case THROWS:
+                case EXCEPTION: {
+                    var t = (ThrowsTree) tag;
+                    var exception = t.getExceptionName().toString();
+                    var desc = renderTrees(t.getDescription());
+                    lines.add(formatBlock("@throws", exception + (desc.isBlank() ? "" : " - " + desc)));
+                    break;
+                }
+                case DEPRECATED: {
+                    var t = (DeprecatedTree) tag;
+                    lines.add(formatBlock("@deprecated", renderTrees(t.getBody())));
+                    break;
+                }
+                default:
+                    // Fallback to raw text when we don't recognize a block tag.
+                    lines.add(tag.toString());
+            }
+        }
+        return normalizeMarkdown(String.join("\n", lines));
+    }
+
+    private static String formatBlock(String label, String body) {
+        if (body.isBlank()) return label;
+        return label + " " + body;
+    }
+
+    private static String formatParam(String name, String desc, boolean typeParam) {
+        var prefix = typeParam ? "@typeparam" : "@param";
+        if (desc.isBlank()) return prefix + " " + name;
+        return prefix + " " + name + " - " + desc;
+    }
+
+    private static String normalizeMarkdown(String text) {
+        var trimmed = text.trim();
+        trimmed = trimmed.replaceAll("[ \\t]+\\n", "\n");
+        trimmed = trimmed.replaceAll("\\n{3,}", "\n\n");
+        return replaceTags(trimmed);
     }
 
     private static Document parse(String html) {
@@ -190,10 +273,125 @@ public class MarkdownHelper {
     /** If `commentText` looks like HTML, convert it to markdown */
     static String asMarkdown(String commentText) {
         if (isHtml(commentText)) {
-            commentText = htmlToMarkdown(commentText);
+            try {
+                commentText = htmlToMarkdown(commentText);
+            } catch (RuntimeException e) {
+                LOG.warning("Failed to parse Javadoc HTML, falling back to plain text: " + e.getMessage());
+            }
         }
         commentText = replaceTags(commentText);
         return commentText;
+    }
+
+    private static void renderTree(DocTree tree, StringBuilder out) {
+        if (tree instanceof TextTree) {
+            out.append(((TextTree) tree).getBody());
+            return;
+        }
+        if (tree instanceof LiteralTree) {
+            out.append("`").append(((LiteralTree) tree).getBody().getBody()).append("`");
+            return;
+        }
+        if (tree instanceof LinkTree) {
+            var link = (LinkTree) tree;
+            var label = renderTrees(link.getLabel());
+            if (!label.isBlank()) {
+                out.append(label);
+                return;
+            }
+            var ref = link.getReference() != null ? link.getReference().toString() : "";
+            if (!ref.isBlank()) {
+                out.append("`").append(ref).append("`");
+            }
+            return;
+        }
+        if (tree instanceof SeeTree) {
+            out.append(renderTrees(((SeeTree) tree).getReference()));
+            return;
+        }
+        if (tree instanceof StartElementTree) {
+            var name = ((StartElementTree) tree).getName().toString().toLowerCase();
+            switch (name) {
+                case "p":
+                    out.append("\n\n");
+                    break;
+                case "br":
+                    out.append("\n");
+                    break;
+                case "pre":
+                    out.append("\n\n```\n");
+                    break;
+                case "code":
+                    out.append("`");
+                    break;
+                case "b":
+                case "strong":
+                    out.append("**");
+                    break;
+                case "i":
+                case "em":
+                    out.append("*");
+                    break;
+                default:
+                    break;
+            }
+            return;
+        }
+        if (tree instanceof EndElementTree) {
+            var name = ((EndElementTree) tree).getName().toString().toLowerCase();
+            switch (name) {
+                case "pre":
+                    out.append("\n```\n");
+                    break;
+                case "code":
+                    out.append("`");
+                    break;
+                case "b":
+                case "strong":
+                    out.append("**");
+                    break;
+                case "i":
+                case "em":
+                    out.append("*");
+                    break;
+                case "p":
+                    out.append("\n\n");
+                    break;
+                default:
+                    break;
+            }
+            return;
+        }
+        if (tree instanceof EntityTree) {
+            out.append(decodeEntity(((EntityTree) tree).getName().toString()));
+            return;
+        }
+        if (tree instanceof ErroneousTree) {
+            out.append(((ErroneousTree) tree).getBody());
+            return;
+        }
+        if (tree instanceof UnknownInlineTagTree || tree instanceof UnknownBlockTagTree) {
+            out.append(tree.toString());
+            return;
+        }
+        out.append(tree.toString());
+    }
+
+    private static String decodeEntity(String name) {
+        switch (name) {
+            case "lt":
+                return "<";
+            case "gt":
+                return ">";
+            case "amp":
+                return "&";
+            case "nbsp":
+                return " ";
+            case "quot":
+                return "\"";
+            default:
+                return "&" + name + ";";
+        }
     }
 
     private static final Logger LOG = Logger.getLogger("main");

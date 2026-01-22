@@ -4,8 +4,8 @@ import com.google.gson.JsonNull;
 import com.sun.source.tree.*;
 import com.sun.source.util.*;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.StringJoiner;
 import java.util.logging.Logger;
 import javax.lang.model.element.*;
@@ -17,30 +17,33 @@ import org.javacs.JsonHelper;
 import org.javacs.MarkdownHelper;
 import org.javacs.ParseTask;
 import org.javacs.lsp.CompletionItem;
-import org.javacs.lsp.MarkedString;
+import org.javacs.lsp.MarkupContent;
+import org.javacs.lsp.MarkupKind;
 
 public class HoverProvider {
     final CompilerProvider compiler;
-
-    public static final List<MarkedString> NOT_SUPPORTED = List.of();
 
     public HoverProvider(CompilerProvider compiler) {
         this.compiler = compiler;
     }
 
-    public List<MarkedString> hover(Path file, int line, int column) {
+    public MarkupContent hover(Path file, int line, int column) {
         try (var task = compiler.compile(file)) {
             var position = task.root().getLineMap().getPosition(line, column);
             var element = new FindHoverElement(task.task).scan(task.root(), position);
-            if (element == null) return NOT_SUPPORTED;
-            var list = new ArrayList<MarkedString>();
-            var code = printType(element);
-            list.add(new MarkedString("java", code));
+            if (element == null) return null;
             var docs = docs(task, element);
-            if (!docs.isEmpty()) {
-                list.add(new MarkedString(docs));
+            var markdown = new StringBuilder();
+            if (element instanceof TypeElement) {
+                markdown.append(renderTypeHeader((TypeElement) element));
+            } else {
+                var code = printType(element);
+                markdown.append("```java\n").append(code).append("\n```");
             }
-            return list;
+            if (!docs.isEmpty()) {
+                markdown.append("\n\n---\n\n").append(docs);
+            }
+            return new MarkupContent(MarkupKind.Markdown, markdown.toString());
         }
     }
 
@@ -192,6 +195,106 @@ public class HoverProvider {
                 result.append(" extends ").append(superType);
         }
         return result.toString();
+    }
+
+    private String renderTypeHeader(TypeElement type) {
+        var qualifiedName = type.getQualifiedName().toString();
+        var packageName = packageName(qualifiedName);
+        if (packageName.isEmpty()) {
+            packageName = "(default package)";
+        }
+        var builder = new StringBuilder();
+        builder.append("**").append(packageName).append("**\n");
+        builder.append(typeSignature(type));
+        return builder.toString();
+    }
+
+    private String typeSignature(TypeElement type) {
+        var signature = new StringBuilder();
+        var modifiers = typeModifiers(type.getModifiers());
+        if (!modifiers.isEmpty()) {
+            signature.append(modifiers).append(" ");
+        }
+        signature.append(typeKind(type)).append(" ").append(type.getSimpleName());
+
+        var selfQualified = type.getQualifiedName().toString();
+        var selfSimple = type.getSimpleName().toString();
+        var interfaces = type.getInterfaces().stream()
+                .map(t -> displayType(t.toString(), selfQualified, selfSimple))
+                .toList();
+        var superType = type.getSuperclass();
+        var superName = displayType(superType.toString(), selfQualified, selfSimple);
+
+        if (type.getKind() == ElementKind.INTERFACE || type.getKind() == ElementKind.ANNOTATION_TYPE) {
+            if (!interfaces.isEmpty()) {
+                signature.append("\n").append(formatImplements("extends", interfaces));
+            }
+        } else {
+            if (!superName.equals("Object") && !superName.equals("none")) {
+                signature.append("\n").append("extends ").append(superName);
+            }
+            if (!interfaces.isEmpty()) {
+                signature.append("\n").append(formatImplements("implements", interfaces));
+            }
+        }
+        return signature.toString();
+    }
+
+    private String typeKind(TypeElement type) {
+        switch (type.getKind()) {
+            case ANNOTATION_TYPE:
+                return "@interface";
+            case INTERFACE:
+                return "interface";
+            case CLASS:
+                return "class";
+            case ENUM:
+                return "enum";
+            default:
+                return "class";
+        }
+    }
+
+    private String typeModifiers(Set<Modifier> modifiers) {
+        var order = List.of(
+                Modifier.PUBLIC,
+                Modifier.PROTECTED,
+                Modifier.PRIVATE,
+                Modifier.ABSTRACT,
+                Modifier.STATIC,
+                Modifier.FINAL,
+                Modifier.SEALED,
+                Modifier.NON_SEALED);
+        var join = new StringJoiner(" ");
+        for (var m : order) {
+            if (modifiers.contains(m)) {
+                join.add(m.toString());
+            }
+        }
+        return join.toString();
+    }
+
+    private String formatImplements(String keyword, List<String> types) {
+        if (types.isEmpty()) return "";
+        var indent = " ".repeat(keyword.length() + 1);
+        var result = new StringBuilder();
+        result.append(keyword).append(" ").append(types.get(0));
+        for (int i = 1; i < types.size(); i++) {
+            result.append(",\n").append(indent).append(types.get(i));
+        }
+        return result.toString();
+    }
+
+    private String displayType(String raw, String selfQualified, String selfSimple) {
+        var value = raw.replace(selfQualified, selfSimple);
+        value = value.replace("java.lang.", "");
+        return value;
+    }
+
+    private String packageName(String qualifiedName) {
+        var lastDot = qualifiedName.lastIndexOf('.');
+        if (lastDot == -1) return "";
+        return qualifiedName.substring(0, lastDot);
     }
 
     private static final Logger LOG = Logger.getLogger("main");
