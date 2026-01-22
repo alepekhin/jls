@@ -246,7 +246,9 @@ class JavaLanguageServer extends LanguageServer {
     public void didChangeConfiguration(DidChangeConfigurationParams change) {
         var java = change.settings.getAsJsonObject().get("java");
         LOG.info("Received java settings " + java);
-        settings = java.getAsJsonObject();
+        if (java != null && !java.isJsonNull()) {
+            settings = java.getAsJsonObject();
+        }
     }
 
     @Override
