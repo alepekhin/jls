@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.io.StringReader;
 import java.io.StringWriter;
 import java.nio.CharBuffer;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
@@ -52,8 +53,9 @@ public class MarkdownHelper {
 
     private static String renderTrees(List<? extends DocTree> trees) {
         var out = new StringBuilder();
+        var openTags = new ArrayDeque<String>();
         for (var tree : trees) {
-            renderTree(tree, out);
+            renderTree(tree, out, openTags);
         }
         return normalizeMarkdown(out.toString());
     }
@@ -283,9 +285,14 @@ public class MarkdownHelper {
         return commentText;
     }
 
-    private static void renderTree(DocTree tree, StringBuilder out) {
+    private static void renderTree(DocTree tree, StringBuilder out, ArrayDeque<String> openTags) {
         if (tree instanceof TextTree) {
-            out.append(((TextTree) tree).getBody());
+            var text = ((TextTree) tree).getBody();
+            if (!inCodeOrPre(openTags)) {
+                text = text.replaceAll("\\s*\\n\\s*", " ");
+                text = text.replaceAll(" {2,}", " ");
+            }
+            out.append(text);
             return;
         }
         if (tree instanceof LiteralTree) {
@@ -335,6 +342,7 @@ public class MarkdownHelper {
                 default:
                     break;
             }
+            openTags.addLast(name);
             return;
         }
         if (tree instanceof EndElementTree) {
@@ -360,6 +368,7 @@ public class MarkdownHelper {
                 default:
                     break;
             }
+            openTags.removeFirstOccurrence(name);
             return;
         }
         if (tree instanceof EntityTree) {
@@ -375,6 +384,15 @@ public class MarkdownHelper {
             return;
         }
         out.append(tree.toString());
+    }
+
+    private static boolean inCodeOrPre(ArrayDeque<String> openTags) {
+        for (var tag : openTags) {
+            if ("code".equals(tag) || "pre".equals(tag)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static String decodeEntity(String name) {
