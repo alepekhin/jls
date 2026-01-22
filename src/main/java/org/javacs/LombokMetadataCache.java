@@ -162,9 +162,9 @@ public class LombokMetadataCache {
                 continue;
             }
 
-            // Find class in this compilation unit
+            // Find class in this compilation unit (includes enums, which are also ClassTree)
             for (var typeDecl : root.getTypeDecls()) {
-                if (typeDecl.getKind() == Tree.Kind.CLASS) {
+                if (typeDecl.getKind() == Tree.Kind.CLASS || typeDecl.getKind() == Tree.Kind.ENUM) {
                     var classTree = (ClassTree) typeDecl;
                     if (classTree.getSimpleName().toString().equals(simpleClassName)) {
                         return classTree;

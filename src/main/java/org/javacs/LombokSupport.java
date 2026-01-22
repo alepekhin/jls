@@ -28,6 +28,7 @@ public class LombokSupport {
         }
 
         metadata.isRecord = classTree.getKind() == com.sun.source.tree.Tree.Kind.RECORD;
+        var isEnum = classTree.getKind() == com.sun.source.tree.Tree.Kind.ENUM;
         metadata.builderClassName = classTree.getSimpleName().toString() + "Builder";
 
         extractExplicitMembers(classTree, metadata);
@@ -36,7 +37,7 @@ public class LombokSupport {
         extractFields(classTree, metadata);
 
         // Check for Lombok annotations
-        checkAnnotations(classTree, metadata);
+        checkAnnotations(classTree, metadata, isEnum);
 
         // Method/constructor-level @Builder
         extractBuilderFromMethods(classTree, metadata);
@@ -99,8 +100,9 @@ public class LombokSupport {
 
     /**
      * Check what Lombok annotations are present on the class.
+     * @param isEnum whether this class is an enum (enums don't support generated constructors)
      */
-    private static void checkAnnotations(ClassTree classTree, LombokMetadata metadata) {
+    private static void checkAnnotations(ClassTree classTree, LombokMetadata metadata, boolean isEnum) {
         for (var annotation : classTree.getModifiers().getAnnotations()) {
             var annotationType = annotation.getAnnotationType().toString();
             var simpleName = getSimpleName(annotationType);
@@ -148,6 +150,7 @@ public class LombokSupport {
                     metadata.hasEqualsAndHashCode = true;
                     metadata.hasAllArgsConstructor = true;
                 }
+                case "Slf4j" -> metadata.hasSlf4j = true;
             }
         }
     }
@@ -229,6 +232,7 @@ public class LombokSupport {
                metadata.hasAllArgsConstructor ||
                metadata.hasRequiredArgsConstructor ||
                metadata.hasBuilder ||
-               metadata.hasValue;
+               metadata.hasValue ||
+               metadata.hasSlf4j;
     }
 }

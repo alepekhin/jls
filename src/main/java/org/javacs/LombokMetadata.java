@@ -32,6 +32,7 @@ public class LombokMetadata {
     public boolean hasValue = false;
     public boolean hasExplicitConstructor = false;
     public boolean isRecord = false;
+    public boolean hasSlf4j = false;
     public BuilderSource builderSource = BuilderSource.NONE;
 
     // Field information
@@ -295,6 +296,21 @@ public class LombokMetadata {
         if (!(hasSetter || hasData || setterFields.contains(fieldName))) return false;
         if (isFinal(field)) return false;
         return !explicitMethodNames.contains(setterName(field));
+    }
+
+    /**
+     * Check if a variable is the Slf4j log variable.
+     */
+    public boolean isSlf4jLogVariable(String variableName) {
+        return hasSlf4j && "log".equals(variableName);
+    }
+
+    /**
+     * Check if a method is a Slf4j log method (e.g., log.info, log.debug).
+     */
+    public boolean isSlf4jLogMethod(String methodName) {
+        if (!hasSlf4j) return false;
+        return methodName.matches("(trace|debug|info|warn|error)");
     }
 
     /**

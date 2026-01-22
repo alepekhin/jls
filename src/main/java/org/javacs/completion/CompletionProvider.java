@@ -2,6 +2,7 @@ package org.javacs.completion;
 
 import com.sun.source.tree.ClassTree;
 import com.sun.source.tree.CompilationUnitTree;
+import com.sun.source.tree.IdentifierTree;
 import com.sun.source.tree.MemberReferenceTree;
 import com.sun.source.tree.MemberSelectTree;
 import com.sun.source.tree.MethodInvocationTree;
@@ -241,6 +242,7 @@ public class CompletionProvider {
         LOG.info("...complete identifiers");
         var list = new CompletionList();
         list.items = completeUsingScope(task, path, partial, endsWithParen);
+        LombokHandler.addScopeCompletions(task, path, partial, list.items, lombokCache);
         addStaticImports(task, path.getCompilationUnit(), partial, endsWithParen, list);
         if (!list.isIncomplete && partial.length() > 0 && Character.isUpperCase(partial.charAt(0))) {
             addClassNames(path.getCompilationUnit(), Trees.instance(task.task).getSourcePositions(), partial, list);
@@ -439,6 +441,29 @@ public class CompletionProvider {
         var trees = Trees.instance(task.task);
         var select = (MemberSelectTree) path.getLeaf();
         LOG.info("...complete members of " + select.getExpression());
+
+        // Special handling for Slf4j log variable (log.info, log.debug, etc.)
+        if (select.getExpression() instanceof IdentifierTree) {
+            var ident = (IdentifierTree) select.getExpression();
+            if ("log".equals(ident.getName().toString())) {
+                var enclosingPath = path;
+                while (enclosingPath != null) {
+                    if (enclosingPath.getLeaf().getKind() == Tree.Kind.CLASS) {
+                        var enclosingElement = trees.getElement(enclosingPath);
+                        if (enclosingElement instanceof TypeElement) {
+                            var list = new ArrayList<CompletionItem>();
+                            LombokHandler.addSlf4jLogMethodCompletions(task, (TypeElement) enclosingElement, partial, list, lombokCache);
+                            if (!list.isEmpty()) {
+                                return new CompletionList(false, list);
+                            }
+                        }
+                        break;
+                    }
+                    enclosingPath = enclosingPath.getParentPath();
+                }
+            }
+        }
+
         if (select.getExpression() instanceof MethodInvocationTree) {
             var builderList =
                     LombokHandler.builderCompletionsForInvocation(
